@@ -31,7 +31,6 @@
         #arena { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; position: relative; }
         .decks { display: flex; gap: 30px; }
         
-        /* Tactical Card Render Shell */
         .card { width: var(--card-width); height: var(--card-height); background: #fff; border-radius: 8px; color: #111; padding: 5px; display: flex; flex-direction: column; box-shadow: 0 4px 8px rgba(0,0,0,0.4), inset 0 0 0 1.5px #000; position: relative; cursor: pointer; }
         .card.back { background: #d32f2f; border: 3px solid #fff; color: #fff; justify-content: center; align-items: center; font-size: 0.9rem; text-align: center; }
         .card-inner { border: 1.5px solid #000; border-radius: 4px; flex-grow: 1; display: flex; flex-direction: column; padding: 3px; background: #fafafa; position: relative; }
@@ -65,10 +64,9 @@
 </head>
 <body>
 
-    WAITING FOR NETWORK CONNECT...</div>
+    <div id="identity-ribbon">CONNECTING TO TABLE...</div>
 
     <div id="game-grid">
-        <!-- Mats 2, 3, 4 represent relative positions -->
         <div id="p2-mat" class="player-mat">
             <div class="player-header"><span class="lbl">PLAYER 2</span><span class="cnt">Cards: 0</span></div>
             <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
@@ -88,7 +86,7 @@
                 <span id="act-rem">Actions: 3</span>
                 <button id="end-btn">End Turn</button>
             </div>
-            <div id="logs">Connecting to global dealer room pool...</div>
+            <div id="logs">Connected to global dealer room pool successfully.</div>
         </div>
 
         <div id="p4-mat" class="player-mat">
@@ -96,7 +94,6 @@
             <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
         </div>
 
-        <!-- Player 1 Bottom Slot represents Your Frame focus -->
         <div id="p1-mat" class="player-mat">
             <div class="player-header"><span class="lbl">YOUR DEPLOYED ASSETS</span></div>
             <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
@@ -126,10 +123,137 @@
             if(myPlayerNumber > 0) {
                 ribbon.innerText = `YOU ARE POSITION: PLAYER ${myPlayerNumber}`;
                 ribbon.style.background = "#2ecc71";
+
+                let playerName = prompt("Enter your player name:", `Player ${myPlayerNumber}`);
+                if (!playerName) playerName = `Player ${myPlayerNumber}`;
+                socket.emit('setPlayerName', { pNum: myPlayerNumber, name: playerName });
             } else {
                 ribbon.innerText = "ROOM FULL - SPECTATOR EYE MODE ACTIVE";
                 ribbon.style.background = "#e74c3c";
             }
         });
 
-        socket.on('log', (txt) => {const l = document.getElementById('logs');l.innerHTML += <br>• ${txt};l.scrollTop = l.scrollHeight;});socket.on('err', (msg) => alert(msg));socket.on('stateUpdate', (state) => {localState = state;renderBoard();});function renderDOMCard(card, isMini=false) {const el = document.createElement('div');el.className = card ${isMini ? 'mini-card' : ''};let bg = '#16A085';if(card.type==='PROPERTY') bg = card.color?.hex || '#2c3e50';if(card.type==='ACTION') bg = '#8E44AD';if(card.type==='RENT') bg = 'linear-gradient(135deg, #e67e22, #f1c40f)';el.innerHTML = <div class="card-inner"> <div class="card-badge">${card.value}M</div> <div class="card-banner" style="background:${bg};">${card.type}</div> <div class="card-watermark">${card.value}M</div> <div class="card-title">${card.title}</div> <div class="card-desc">${card.desc || 'Standard Bank Asset Coin'}</div> </div>;return el;}function renderBoard() {if(!localState || !myPlayerNumber) return;const isMyTurn = (localState.activePlayerIndex === (myPlayerNumber - 1));document.getElementById('status-line').innerText = PLAYER ${localState.activePlayerIndex + 1} IS PLAYING;document.getElementById('act-rem').innerText = Actions Left: ${localState.actionsRemaining};document.getElementById('end-btn').disabled = !isMyTurn;// Update Discard pileconst disc = document.getElementById('discard-deck');if(localState.discardPile.length > 0) {disc.innerHTML = "";disc.appendChild(renderDOMCard(localState.discardPile[localState.discardPile.length - 1]));disc.style.background = "#fff";} else {disc.innerHTML = "EMPTY";disc.style.background = "#111";}// Map and shift absolute layout arrays dynamically to maintain local perspective focus// Local Player occupies Bottom Slot (p1-mat), others scale clockwiselet mapping = [];if(myPlayerNumber === 0) mapping = [1, 4]; // Spectator fallback indexingelse if(myPlayerNumber === 1) mapping = [1, 4];else if(myPlayerNumber === 2) mapping = [4, 1];else if(myPlayerNumber === 3) mapping = [4, 1];else if(myPlayerNumber === 4) mapping = [4, 1];const htmlMatIds = ['p1-mat', 'p2-mat', 'p3-mat', 'p4-mat'];mapping.forEach((targetPNum, i) => {const serverData = localState.players.find(p => p.id === targetPNum);const matDom = document.getElementById(htmlMatIds[i]);// Active Turn styling highlightsif(localState.activePlayerIndex === (targetPNum - 1)) matDom.classList.add('active-turn');else matDom.classList.remove('active-turn');// Label updatesconst titleStr = targetPNum === myPlayerNumber ? "YOUR BOARD FIELD (YOU)" : PLAYER ${targetPNum};matDom.querySelector('.lbl').innerText = ${titleStr} [Cards: ${serverData.handCount}];// Render field assetsconst bZone = matDom.querySelector('.bank-zone .card-list');const pZone = matDom.querySelector('.property-zone .card-list');bZone.innerHTML = ""; pZone.innerHTML = "";serverData.bank.forEach(c => bZone.appendChild(renderDOMCard(c, true)));Object.keys(serverData.properties).forEach(col => {serverData.properties[col].forEach(c => pZone.appendChild(renderDOMCard(c, true)));});});// Render Private Client Hand cardsconst handBox = document.getElementById('my-hand');handBox.innerHTML = "";const personalData = localState.players.find(p => p.id === myPlayerNumber);if(personalData && personalData.rawHand) {personalData.rawHand.forEach(card => {const cDom = renderDOMCard(card);if(isMyTurn && localState.actionsRemaining > 0) {cDom.addEventListener('click', () => openOptions(card));}handBox.appendChild(cDom);});}}function openOptions(card) {selectedCardId = card.id;document.getElementById('mod-title').innerText = card.title;document.getElementById('m-prop').style.display = card.type === 'PROPERTY' ? 'block' : 'none';document.getElementById('m-act').style.display = (card.type === 'ACTION' || card.type === 'RENT') ? 'block' : 'none';document.getElementById('overlay').style.display = 'block';document.getElementById('modal').style.display = 'flex';}function closeOptions() {document.getElementById('overlay').style.display = 'none';document.getElementById('modal').style.display = 'none';selectedCardId = null;}document.getElementById('m-bank').addEventListener('click', () => { sendPlay('bank'); });document.getElementById('m-prop').addEventListener('click', () => { sendPlay('property'); });document.getElementById('m-act').addEventListener('click', () => { sendPlay('discard'); });document.getElementById('m-cancel').addEventListener('click', closeOptions);document.getElementById('draw-deck').addEventListener('click', () => {if(localState && localState.activePlayerIndex === (myPlayerNumber - 1)) {socket.emit('drawPhase', myPlayerNumber);}});document.getElementById('end-btn').addEventListener('click', () => {if(myPlayerNumber) socket.emit('endTurn', myPlayerNumber);});function sendPlay(dest) {if(!selectedCardId || !myPlayerNumber) return;socket.emit('playCard', { pNum: myPlayerNumber, cardId: selectedCardId, destination: dest });closeOptions();}
+        socket.on('log', (txt) => {
+            const l = document.getElementById('logs');
+            l.innerHTML += `<br>• ${txt}`;
+            l.scrollTop = l.scrollHeight;
+        });
+
+        socket.on('err', (msg) => alert(msg));
+        
+        socket.on('stateUpdate', (state) => {
+            localState = state;
+            renderBoard();
+        });
+
+        function renderDOMCard(card, isMini=false) {
+            const el = document.createElement('div');
+            el.className = `card ${isMini ? 'mini-card' : ''}`;
+            let bg = '#16A085';
+            if(card.type==='PROPERTY') bg = card.color?.hex || '#2c3e50';
+            if(card.type==='ACTION') bg = '#8E44AD';
+            if(card.type==='RENT') bg = 'linear-gradient(135deg, #e67e22, #f1c40f)';
+            el.innerHTML = `<div class="card-inner"> <div class="card-badge">${card.value}M</div> <div class="card-banner" style="background:${bg};">${card.type}</div> <div class="card-watermark">${card.value}M</div> <div class="card-title">${card.title}</div> <div class="card-desc">${card.desc || 'Standard Bank Asset Coin'}</div> </div>`;
+            return el;
+        }
+
+        function renderBoard() {
+            if(!localState || !myPlayerNumber) return;
+            const activePlayer = localState.players[localState.activePlayerIndex];
+            const isMyTurn = (localState.activePlayerIndex === (myPlayerNumber - 1));
+            
+            document.getElementById('status-line').innerText = `${activePlayer ? activePlayer.label : 'PLAYER'} IS PLAYING`;
+            document.getElementById('act-rem').innerText = `Actions Left: ${localState.actionsRemaining}`;
+            document.getElementById('end-btn').disabled = !isMyTurn;
+
+            const disc = document.getElementById('discard-deck');
+            if(localState.discardPile.length > 0) {
+                disc.innerHTML = "";
+                disc.appendChild(renderDOMCard(localState.discardPile[localState.discardPile.length - 1]));
+                disc.style.background = "#fff";
+            } else {
+                disc.innerHTML = "EMPTY";
+                disc.style.background = "#111";
+            }
+
+            let mapping = [1, 2, 3, 4];
+            if (myPlayerNumber === 2) mapping = [2, 3, 4, 1];
+            if (myPlayerNumber === 3) mapping = [3, 4, 1, 2];
+            if (myPlayerNumber === 4) mapping = [4, 1, 2, 3];
+            if (myPlayerNumber === 0) mapping = [1, 2, 3, 4];
+
+            const htmlMatIds = ['p1-mat', 'p2-mat', 'p3-mat', 'p4-mat'];
+            
+            mapping.forEach((targetPNum, i) => {
+                const serverData = localState.players.find(p => p.id === targetPNum);
+                const matDom = document.getElementById(htmlMatIds[i]);
+
+                if(localState.activePlayerIndex === (targetPNum - 1)) matDom.classList.add('active-turn');
+                else matDom.classList.remove('active-turn');
+
+                const titleStr = targetPNum === myPlayerNumber ? `${serverData.label} (YOU)` : serverData.label;
+                matDom.querySelector('.lbl').innerText = `${titleStr} [Cards: ${serverData.handCount}]`;
+
+                const bZone = matDom.querySelector('.bank-zone .card-list');
+                const pZone = matDom.querySelector('.property-zone .card-list');
+                bZone.innerHTML = ""; 
+                pZone.innerHTML = "";
+                
+                serverData.bank.forEach(c => bZone.appendChild(renderDOMCard(c, true)));
+                Object.keys(serverData.properties).forEach(col => {
+                    serverData.properties[col].forEach(c => pZone.appendChild(renderDOMCard(c, true)));
+                });
+            });
+
+            const handBox = document.getElementById('my-hand');
+            handBox.innerHTML = "";
+            const personalData = localState.players.find(p => p.id === myPlayerNumber);
+            if(personalData && personalData.rawHand) {
+                personalData.rawHand.forEach(card => {
+                    const cDom = renderDOMCard(card);
+                    if(isMyTurn && localState.actionsRemaining > 0) {
+                        cDom.addEventListener('click', () => openOptions(card));
+                    }
+                    handBox.appendChild(cDom);
+                });
+            }
+        }
+
+        function openOptions(card) {
+            selectedCardId = card.id;
+            document.getElementById('mod-title').innerText = card.title;
+            document.getElementById('m-prop').style.display = card.type === 'PROPERTY' ? 'block' : 'none';
+            document.getElementById('m-act').style.display = (card.type === 'ACTION' || card.type === 'RENT') ? 'block' : 'none';
+            document.getElementById('overlay').style.display = 'block';
+            document.getElementById('modal').style.display = 'flex';
+        }
+
+        function closeOptions() {
+            document.getElementById('overlay').style.display = 'none';
+            document.getElementById('modal').style.display = 'none';
+            selectedCardId = null;
+        }
+
+        document.getElementById('m-bank').addEventListener('click', () => { sendPlay('bank'); });
+        document.getElementById('m-prop').addEventListener('click', () => { sendPlay('property'); });
+        document.getElementById('m-act').addEventListener('click', () => { sendPlay('discard'); });
+        document.getElementById('m-cancel').addEventListener('click', closeOptions);
+        
+        document.getElementById('draw-deck').addEventListener('click', () => {
+            if(localState && localState.activePlayerIndex === (myPlayerNumber - 1)) {
+                socket.emit('drawPhase', myPlayerNumber);
+            }
+        });
+
+        document.getElementById('end-btn').addEventListener('click', () => {
+            if(myPlayerNumber) socket.emit('endTurn', myPlayerNumber);
+        });
+
+        function sendPlay(dest) {
+            if(!selectedCardId || !myPlayerNumber) return;
+            socket.emit('playCard', { pNum: myPlayerNumber, cardId: selectedCardId, destination: dest });
+            closeOptions();
+        }
+    </script>
+</body>
+</html>

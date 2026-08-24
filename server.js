@@ -8,10 +8,8 @@ const io = new Server(server, {
     cors: { origin: "*" }
 });
 
-// Serve the frontend static HTML files cleanly
 app.use(express.static(__dirname));
 
-let connectedPlayers = []; // Tracks socket IDs
 let gameState = {
     deck: [],
     discardPile: [],
@@ -39,7 +37,6 @@ const COLORS = {
     UTILITY: { name: 'Utility', req: 2, hex: '#7F8C8D' }
 };
 
-// Base 110-card deck configuration matrix
 const CARD_TEMPLATES = [
     { type: CARD_TYPES.PROP, title: 'Old Kent Road', color: COLORS.BROWN, value: 1 },
     { type: CARD_TYPES.PROP, title: 'Whitechapel Road', color: COLORS.BROWN, value: 1 },
@@ -84,7 +81,7 @@ const CARD_TEMPLATES = [
 function initBuildDeck() {
     let pool = [];
     let id = 0;
-    for (let i = 0; i < 3; i++) { // 3 sets mixed to confidently support a 4-player cross-device session
+    for (let i = 0; i < 3; i++) {
         CARD_TEMPLATES.forEach(t => pool.push({ ...t, id: id++ }));
     }
     gameState.deck = shuffle(pool);
@@ -113,24 +110,30 @@ function dealCards(playerIdx, count) {
 initBuildDeck();
 gameState.players.forEach((p, idx) => {
     Object.keys(COLORS).forEach(c => p.properties[c] = []);
-    dealCards(idx, 5); // Deal 5 cards initially
+    dealCards(idx, 5);
 });
 
 io.on('connection', (socket) => {
     console.log(`Device connected: ${socket.id}`);
 
-    // Assign slot out of the 4 open slots
     let playerSlot = gameState.players.find(p => p.socketId === null);
     
     if (playerSlot) {
         playerSlot.socketId = socket.id;
         socket.emit('assignPlayer', { playerNumber: playerSlot.id });
-        io.emit('log', `Player ${playerSlot.id} joined from a device.`);
     } else {
-        socket.emit('assignPlayer', { playerNumber: 0 }); // Spectator mode if room full
+        socket.emit('assignPlayer', { playerNumber: 0 });
     }
 
-    // Sync state to newly connected client device
+    socket.on('setPlayerName', ({ pNum, name }) => {
+        let idx = pNum - 1;
+        if (idx >= 0 && idx < 4 && name) {
+            gameState.players[idx].label = name.substring(0, 15);
+            io.emit('log', `${gameState.players[idx].label} joined the table.`);
+            io.emit('stateUpdate', sanitizeState());
+        }
+    });
+
     io.emit('stateUpdate', sanitizeState());
 
     socket.on('drawPhase', (pNum) => {
@@ -155,14 +158,14 @@ io.on('connection', (socket) => {
 
         if (destination === 'bank') {
             gameState.players[idx].bank.push(card);
-            io.emit('log', `Player ${pNum} deposited ${card.title} into their bank.`);
+            io.emit('log', `${gameState.players[idx].label} deposited ${card.title} into their bank.`);
         } else if (destination === 'property' && card.type === CARD_TYPES.PROP) {
             let colKey = card.color.name.toUpperCase().replace(" ", "");
             gameState.players[idx].properties[colKey].push(card);
-            io.emit('log', `Player ${pNum} placed property asset: ${card.title}.`);
+            io.emit('log', `${gameState.players[idx].label} placed property asset: ${card.title}.`);
         } else {
             gameState.discardPile.push(card);
-            io.emit('log', `Player ${pNum} played Action: ${card.title}.`);
+            io.emit('log', `${gameState.players[idx].label} played Action: ${card.title}.`);
         }
 
         gameState.actionsRemaining--;
@@ -180,32 +183,31 @@ io.on('connection', (socket) => {
 
         gameState.activePlayerIndex = (gameState.activePlayerIndex + 1) % 4;
         gameState.actionsRemaining = 3;
-        io.emit('log', `Turn passed to Player ${gameState.activePlayerIndex + 1}.`);
+        io.emit('log', `Turn passed to ${gameState.players[gameState.activePlayerIndex].label}.`);
         io.emit('stateUpdate', sanitizeState());
     });
 
     socket.on('disconnect', () => {
         let p = gameState.players.find(p => p.socketId === socket.id);
         if (p) {
-            io.emit('log', `Player ${p.id} left the game session.`);
-            p.socketId = null; // Free up slot for reconnection
+            io.emit('log', `${p.label} left the game session.`);
+            p.socketId = null;
+            io.emit('stateUpdate', sanitizeState());
         }
     });
 });
 
-// Clears tracking identifiers before broadcasting across client interfaces
 function sanitizeState() {
     return {
         discardPile: gameState.discardPile,
         activePlayerIndex: gameState.activePlayerIndex,
         actionsRemaining: gameState.actionsRemaining,
-        players: gameState.players.map(p => ({
+        players: gameState.players.main ? gameState.players : gameState.players.map(p => ({
             id: p.id,
             label: p.label,
             bank: p.bank,
             properties: p.properties,
             handCount: p.hand.length,
-            // Only broadcast raw hand content dynamically on the interface side via private loops
             rawHand: p.hand 
         }))
     };
