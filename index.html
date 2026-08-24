@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monopoly Deal Live Grid</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-color: #161d24;
+            --board-color: #090e12;
+            --card-width: 110px;
+            --card-height: 165px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+        body { font-family: 'Arial Black', sans-serif; background: var(--bg-color); color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        #identity-ribbon { background: #f1c40f; color: #000; text-align: center; padding: 5px; font-size: 0.9rem; font-weight: bold; }
+        #game-grid { display: grid; grid-template-columns: 1fr 2fr 1fr; grid-template-rows: 1fr 1.8fr 1fr; height: calc(100vh - 30px); padding: 10px; gap: 10px; background: var(--board-color); }
+        .player-mat { background: rgba(255,255,255,0.03); border: 2px dashed rgba(255,255,255,0.1); border-radius: 12px; padding: 8px; display: flex; flex-direction: column; gap: 5px; overflow: hidden; }
+        .player-mat.active-turn { border-color: #f1c40f; box-shadow: 0 0 15px rgba(241, 196, 15, 0.2); }
+        .player-header { font-size: 0.85rem; display: flex; justify-content: space-between; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 3px; }
+        .mat-zones { display: grid; grid-template-columns: 1fr 2fr; gap: 5px; flex-grow: 1; overflow: hidden; }
+        .bank-zone, .property-zone { background: rgba(0,0,0,0.3); border-radius: 6px; padding: 5px; overflow-y: auto; }
+        .zone-title { font-family: sans-serif; font-size: 0.65rem; color: #777; font-weight: bold; text-transform: uppercase; margin-bottom: 4px; }
+        
+        #p2-mat { grid-column: 2; grid-row: 1; }
+        #p3-mat { grid-column: 1; grid-row: 2; }
+        #p4-mat { grid-column: 3; grid-row: 2; }
+        #p1-mat { grid-column: 2; grid-row: 3; }
+
+        #arena { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; position: relative; }
+        .decks { display: flex; gap: 30px; }
+        
+        /* Tactical Card Render Shell */
+        .card { width: var(--card-width); height: var(--card-height); background: #fff; border-radius: 8px; color: #111; padding: 5px; display: flex; flex-direction: column; box-shadow: 0 4px 8px rgba(0,0,0,0.4), inset 0 0 0 1.5px #000; position: relative; cursor: pointer; }
+        .card.back { background: #d32f2f; border: 3px solid #fff; color: #fff; justify-content: center; align-items: center; font-size: 0.9rem; text-align: center; }
+        .card-inner { border: 1.5px solid #000; border-radius: 4px; flex-grow: 1; display: flex; flex-direction: column; padding: 3px; background: #fafafa; position: relative; }
+        .card-banner { height: 24px; border: 1.5px solid #000; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 0.55rem; color: #fff; text-shadow: 1px 1px 0px #000; text-transform: uppercase; }
+        .card-badge { position: absolute; top: 1px; left: 1px; background: #fff; border: 1.5px solid #000; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 0.6rem; font-weight: 900; color: #000; z-index: 2; }
+        .card-title { font-size: 0.65rem; text-align: center; margin-top: 15px; text-transform: uppercase; flex-grow: 1; display: flex; align-items: center; justify-content: center; color: #000; }
+        .card-watermark { position: absolute; font-size: 1.8rem; opacity: 0.06; font-weight: 900; top: 50%; left: 50%; transform: translate(-50%, -30%); color: #000; }
+        .card-desc { font-family: sans-serif; font-size: 0.5rem; text-align: center; color: #555; border-top: 1px dashed #ccc; padding-top: 2px; min-height: 24px; display: flex; align-items: center; justify-content: center; }
+
+        .mini-card { width: 52px; height: 78px; padding: 2px; box-shadow: 0 2px 4px rgba(0,0,0,0.3); }
+        .mini-card .card-inner { border: 1px solid #000; padding: 1px; }
+        .mini-card .card-banner { height: 12px; font-size: 0.35rem; }
+        .mini-card .card-badge { width: 12px; height: 12px; font-size: 0.4rem; top: 0px; left: 0px; border: 1px solid #000; }
+        .mini-card .card-title { font-size: 0.4rem; margin-top: 4px; }
+        .mini-card .card-watermark, .mini-card .card-desc { display: none; }
+
+        .card-list { display: flex; gap: 4px; flex-wrap: wrap; }
+        #my-hand { display: flex; gap: 6px; overflow-x: auto; min-height: 170px; padding-top: 4px; flex-wrap: nowrap; }
+        
+        #controls { display: flex; gap: 10px; background: rgba(0,0,0,0.4); padding: 5px 15px; border-radius: 20px; align-items: center; font-size: 0.8rem; }
+        button { background: #27ae60; color: #fff; border: none; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 0.75rem; text-transform: uppercase; }
+        button:disabled { background: #444; color: #777; cursor: not-allowed; }
+        #end-btn { background: #e74c3c; }
+
+        #modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: #fff; color: #000; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 100; flex-direction: column; gap: 8px; width: 280px; }
+        #overlay { display: none; position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index: 99; }
+        .mod-btn { width: 100%; padding: 10px; border-radius: 6px; text-align: center; }
+
+        #logs { font-family: sans-serif; width: 100%; height: 50px; background: rgba(0,0,0,0.5); border-radius: 6px; padding: 5px; font-size: 0.7rem; overflow-y: auto; color: #bbb; text-transform: none; }
+    </style>
+</head>
+<body>
+
+    WAITING FOR NETWORK CONNECT...</div>
+
+    <div id="game-grid">
+        <!-- Mats 2, 3, 4 represent relative positions -->
+        <div id="p2-mat" class="player-mat">
+            <div class="player-header"><span class="lbl">PLAYER 2</span><span class="cnt">Cards: 0</span></div>
+            <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
+        </div>
+        <div id="p3-mat" class="player-mat">
+            <div class="player-header"><span class="lbl">PLAYER 3</span><span class="cnt">Cards: 0</span></div>
+            <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
+        </div>
+
+        <div id="arena">
+            <div id="status-line" style="color:#f1c40f; font-size:1.1rem; text-shadow:1px 1px 2px #000;">SYNCING ROOM SYSTEM...</div>
+            <div class="decks">
+                <div id="draw-deck" class="card back">MONOPOLY<br><span style="font-size:0.6rem;">DEAL</span></div>
+                <div id="discard-deck" class="card" style="background:#111; border:2px dashed #333; box-shadow:none; justify-content:center; align-items:center; color:#444; font-size:0.7rem;">EMPTY</div>
+            </div>
+            <div id="controls">
+                <span id="act-rem">Actions: 3</span>
+                <button id="end-btn">End Turn</button>
+            </div>
+            <div id="logs">Connecting to global dealer room pool...</div>
+        </div>
+
+        <div id="p4-mat" class="player-mat">
+            <div class="player-header"><span class="lbl">PLAYER 4</span><span class="cnt">Cards: 0</span></div>
+            <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
+        </div>
+
+        <!-- Player 1 Bottom Slot represents Your Frame focus -->
+        <div id="p1-mat" class="player-mat">
+            <div class="player-header"><span class="lbl">YOUR DEPLOYED ASSETS</span></div>
+            <div class="mat-zones"><div class="bank-zone"><div class="zone-title">Bank</div><div class="card-list"></div></div><div class="property-zone"><div class="zone-title">Properties</div><div class="card-list"></div></div></div>
+            <div class="zone-title" style="margin-top:3px; margin-bottom:0;">Your Hidden Hand</div>
+            <div id="my-hand"></div>
+        </div>
+    </div>
+
+    <div id="overlay"></div>
+    <div id="modal">
+        <h3 id="mod-title" style="text-align:center; font-size:1rem; border-bottom:1px solid #eee; padding-bottom:5px;">Options</h3>
+        <button id="m-bank" class="mod-btn" style="background:#16A085;">⚡ Bank Asset</button>
+        <button id="m-prop" class="mod-btn" style="background:#2980B9;">🏠 Build Property</button>
+        <button id="m-act" class="mod-btn" style="background:#8E44AD;">🔥 Throw Action</button>
+        <button id="m-cancel" class="mod-btn" style="background:#7F8C8D;">Cancel</button>
+    </div>
+
+    <script>
+        const socket = io();
+        let myPlayerNumber = null;
+        let localState = null;
+        let selectedCardId = null;
+
+        socket.on('assignPlayer', (data) => {
+            myPlayerNumber = data.playerNumber;
+            const ribbon = document.getElementById('identity-ribbon');
+            if(myPlayerNumber > 0) {
+                ribbon.innerText = `YOU ARE POSITION: PLAYER ${myPlayerNumber}`;
+                ribbon.style.background = "#2ecc71";
+            } else {
+                ribbon.innerText = "ROOM FULL - SPECTATOR EYE MODE ACTIVE";
+                ribbon.style.background = "#e74c3c";
+            }
+        });
+
+        socket.on('log', (txt) => {const l = document.getElementById('logs');l.innerHTML += <br>• ${txt};l.scrollTop = l.scrollHeight;});socket.on('err', (msg) => alert(msg));socket.on('stateUpdate', (state) => {localState = state;renderBoard();});function renderDOMCard(card, isMini=false) {const el = document.createElement('div');el.className = card ${isMini ? 'mini-card' : ''};let bg = '#16A085';if(card.type==='PROPERTY') bg = card.color?.hex || '#2c3e50';if(card.type==='ACTION') bg = '#8E44AD';if(card.type==='RENT') bg = 'linear-gradient(135deg, #e67e22, #f1c40f)';el.innerHTML = <div class="card-inner"> <div class="card-badge">${card.value}M</div> <div class="card-banner" style="background:${bg};">${card.type}</div> <div class="card-watermark">${card.value}M</div> <div class="card-title">${card.title}</div> <div class="card-desc">${card.desc || 'Standard Bank Asset Coin'}</div> </div>;return el;}function renderBoard() {if(!localState || !myPlayerNumber) return;const isMyTurn = (localState.activePlayerIndex === (myPlayerNumber - 1));document.getElementById('status-line').innerText = PLAYER ${localState.activePlayerIndex + 1} IS PLAYING;document.getElementById('act-rem').innerText = Actions Left: ${localState.actionsRemaining};document.getElementById('end-btn').disabled = !isMyTurn;// Update Discard pileconst disc = document.getElementById('discard-deck');if(localState.discardPile.length > 0) {disc.innerHTML = "";disc.appendChild(renderDOMCard(localState.discardPile[localState.discardPile.length - 1]));disc.style.background = "#fff";} else {disc.innerHTML = "EMPTY";disc.style.background = "#111";}// Map and shift absolute layout arrays dynamically to maintain local perspective focus// Local Player occupies Bottom Slot (p1-mat), others scale clockwiselet mapping = [];if(myPlayerNumber === 0) mapping = [1, 4]; // Spectator fallback indexingelse if(myPlayerNumber === 1) mapping = [1, 4];else if(myPlayerNumber === 2) mapping = [4, 1];else if(myPlayerNumber === 3) mapping = [4, 1];else if(myPlayerNumber === 4) mapping = [4, 1];const htmlMatIds = ['p1-mat', 'p2-mat', 'p3-mat', 'p4-mat'];mapping.forEach((targetPNum, i) => {const serverData = localState.players.find(p => p.id === targetPNum);const matDom = document.getElementById(htmlMatIds[i]);// Active Turn styling highlightsif(localState.activePlayerIndex === (targetPNum - 1)) matDom.classList.add('active-turn');else matDom.classList.remove('active-turn');// Label updatesconst titleStr = targetPNum === myPlayerNumber ? "YOUR BOARD FIELD (YOU)" : PLAYER ${targetPNum};matDom.querySelector('.lbl').innerText = ${titleStr} [Cards: ${serverData.handCount}];// Render field assetsconst bZone = matDom.querySelector('.bank-zone .card-list');const pZone = matDom.querySelector('.property-zone .card-list');bZone.innerHTML = ""; pZone.innerHTML = "";serverData.bank.forEach(c => bZone.appendChild(renderDOMCard(c, true)));Object.keys(serverData.properties).forEach(col => {serverData.properties[col].forEach(c => pZone.appendChild(renderDOMCard(c, true)));});});// Render Private Client Hand cardsconst handBox = document.getElementById('my-hand');handBox.innerHTML = "";const personalData = localState.players.find(p => p.id === myPlayerNumber);if(personalData && personalData.rawHand) {personalData.rawHand.forEach(card => {const cDom = renderDOMCard(card);if(isMyTurn && localState.actionsRemaining > 0) {cDom.addEventListener('click', () => openOptions(card));}handBox.appendChild(cDom);});}}function openOptions(card) {selectedCardId = card.id;document.getElementById('mod-title').innerText = card.title;document.getElementById('m-prop').style.display = card.type === 'PROPERTY' ? 'block' : 'none';document.getElementById('m-act').style.display = (card.type === 'ACTION' || card.type === 'RENT') ? 'block' : 'none';document.getElementById('overlay').style.display = 'block';document.getElementById('modal').style.display = 'flex';}function closeOptions() {document.getElementById('overlay').style.display = 'none';document.getElementById('modal').style.display = 'none';selectedCardId = null;}document.getElementById('m-bank').addEventListener('click', () => { sendPlay('bank'); });document.getElementById('m-prop').addEventListener('click', () => { sendPlay('property'); });document.getElementById('m-act').addEventListener('click', () => { sendPlay('discard'); });document.getElementById('m-cancel').addEventListener('click', closeOptions);document.getElementById('draw-deck').addEventListener('click', () => {if(localState && localState.activePlayerIndex === (myPlayerNumber - 1)) {socket.emit('drawPhase', myPlayerNumber);}});document.getElementById('end-btn').addEventListener('click', () => {if(myPlayerNumber) socket.emit('endTurn', myPlayerNumber);});function sendPlay(dest) {if(!selectedCardId || !myPlayerNumber) return;socket.emit('playCard', { pNum: myPlayerNumber, cardId: selectedCardId, destination: dest });closeOptions();}
